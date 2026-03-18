@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.5/aframe/build/aframe-ar-nft.js"></script>
+    <style>
+      body { margin: 0; overflow: hidden; }
+      .arjs-loader {
+        height: 100%; width: 100%; position: absolute;
+        top: 0; left: 0; background-color: rgba(0,0,0,0.8);
+        z-index: 9999; display: flex;
+        justify-content: center; align-items: center;
+      }
+      .arjs-loader div { text-align: center; font-size: 1.25em; color: white; }
+      #hint {
+        position: fixed; bottom: 20px; left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0,0,0,0.6); color: white;
+        padding: 8px 16px; border-radius: 20px;
+        font-size: 12px; z-index: 9999;
+        pointer-events: none; text-align: center;
+      }
+      #debug {
+        position: fixed; top: 10px; left: 10px;
+        background: rgba(0,0,0,0.75); color: lime;
+        padding: 8px 12px; font-size: 11px;
+        z-index: 9999; border-radius: 6px;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="arjs-loader"><div>Loading, please wait...</div></div>
+    <div id="debug">Loading...</div>
+    <div id="hint">
+      🖱️ Left = Rotate &nbsp;|&nbsp; Right = Pan &nbsp;|&nbsp; Scroll = Zoom<br>
+      📱 1 finger = Rotate &nbsp;|&nbsp; 2 fingers = Zoom/Pan
+    </div>
+
+    <a-scene
+      vr-mode-ui="enabled: false;"
+      renderer="antialias: true; alpha: true; colorManagement: false;"
+      embedded
+      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
+    >
+      <a-assets timeout="30000">
+        <a-asset-item id="myModel" src="/models/object_0.glb"></a-asset-item>
+      </a-assets>
+
+      <a-nft
+        type="nft"
+        url="/markers/uno"
+        smooth="true"
+        smoothcount="20"
+        smoothtolerance="0.5"
+        smooththreshold="10"
+      >
+        <a-entity id="pivot">
+          <a-entity
+            id="model3d"
+            gltf-model="#myModel"
+            position="0 0 0"
+            rotation="-90 0 0"
+            scale="1 1 1"
+          ></a-entity>
+        </a-entity>
+      </a-nft>
+
+      <a-entity camera></a-entity>
+    </a-scene>
+
+    <script>
+      const scene   = document.querySelector('a-scene');
+      const modelEl = document.querySelector('#model3d');
+      const pivot   = document.querySelector('#pivot');
+      const debug   = document.getElementById('debug');
+
+      scene.addEventListener('loaded', () => {
+        document.querySelector('.arjs-loader').style.display = 'none';
+      });
+
+      // ─── State ───────────────────────────────────────────────
+      let rotX = 0, rotY = 0;
+      let panX = 0, panY = 0;
+      let currentScale = 1;
+      let baseScale    = 1;
+
+      function applyTransform() {
+        pivot.object3D.position.set(panX, panY, 0);
+        modelEl.object3D.rotation.set(
+          THREE.MathUtils.degToRad(rotX - 90),
+          THREE.MathUtils.degToRad(rotY),
+          0
+        );
+        const s = baseScale * currentScale;
+        modelEl.object3D.scale.set(s, s, s);
+      }
+
+      // ─── Model loaded ────────────────────────────────────────
+      modelEl.addEventListener('model-loaded', () => {
+        const mesh = modelEl.getObject3D('mesh');
+        if (!mesh) { debug.innerHTML = '❌ No mesh!'; return; }
+
+        let meshCount = 0;
+
+        // ✅ KEY FIX: Convert to MeshBasicMaterial to show original colors
+        mesh.traverse((node) => {
+          if (node.isMesh) {
+            meshCount++;
+            node.frustumCulled = false;
+
+            const mats = Array.isArray(node.material) ? node.material : [node.material];
+
+            mats.forEach((mat, i) => {
+              // ✅ Create a new MeshBasicMaterial keeping the original texture/color
+              const basicMat = new THREE.MeshBasicMaterial();
+
+              // Copy color texture (the most important one)
+              if (mat.map) {
+                basicMat.map = mat.map;
+                basicMat.map.encoding = THREE.LinearEncoding;
+                basicMat.map.needsUpdate = true;
+              } else if (mat.color) {
+                basicMat.color = mat.color;
+              }
+
+              // Copy transparency if needed
+              basicMat.transparent = mat.transparent || false;
+              basicMat.opacity     = mat.opacity     || 1.0;
+              basicMat.side        = THREE.DoubleSide;
+              basicMat.needsUpdate = true;
+
+              // Replace material
+              if (Array.isArray(node.material)) {
+                node.material[i] = basicMat;
+              } else {
+                node.material = basicMat;
+              }
+            });
+          }
+        });
+
+        // Auto scale
+        const box = new THREE.Box3().setFromObject(mesh);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        baseScale = 160 / maxDim;
+
+        // Center + lift
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        modelEl.object3D.position.set(
+          -center.x * baseScale,
+          -center.y * baseScale,
+          (size.z * baseScale) / 2
+        );
+
+        applyTransform();
+
+        debug.innerHTML = `✅ Colors fixed!<br>📦 Meshes: ${meshCount}<br>📐 Scale: ${baseScale.toFixed(3)}`;
+        console.log(`✅ Converted ${meshCount} meshes to MeshBasicMaterial`);
+      });
+
+      modelEl.addEventListener('model-error', (e) => {
+        debug.innerHTML = `❌ Error: ${JSON.stringify(e.detail)}`;
+      });
+
+      // ─── Mouse: Rotate (left) + Pan (right) ─────────────────
+      let mouseDown = false, rightClick = false;
+      let lastX = 0, lastY = 0;
+      const ROTATE_SPEED = 0.4;
+      const PAN_SPEED    = 0.15;
+
+      document.addEventListener('contextmenu', e => e.preventDefault());
+      document.addEventListener('mousedown', (e) => {
+        mouseDown = true; rightClick = e.button === 2;
+        lastX = e.clientX; lastY = e.clientY;
+      });
+      document.addEventListener('mouseup', () => mouseDown = false);
+      document.addEventListener('mousemove', (e) => {
+        if (!mouseDown) return;
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
+        lastX = e.clientX; lastY = e.clientY;
+        if (rightClick) {
+          panX += dx * PAN_SPEED;
+          panY -= dy * PAN_SPEED;
+        } else {
+          rotY += dx * ROTATE_SPEED;
+          rotX += dy * ROTATE_SPEED;
+          rotX  = Math.max(-89, Math.min(89, rotX));
+        }
+        applyTransform();
+      });
+
+      // ─── Scroll: Zoom ────────────────────────────────────────
+      document.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        currentScale *= e.deltaY > 0 ? 0.95 : 1.05;
+        currentScale  = Math.max(0.1, Math.min(10, currentScale));
+        applyTransform();
+      }, { passive: false });
+
+      // ─── Touch controls ──────────────────────────────────────
+      let lastT1 = null, lastT2 = null, lastPinch = null;
+
+      document.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+          lastT1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          lastT2 = null; lastPinch = null;
+        } else if (e.touches.length === 2) {
+          lastT1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          lastT2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
+          lastPinch = Math.hypot(
+            e.touches[1].clientX - e.touches[0].clientX,
+            e.touches[1].clientY - e.touches[0].clientY
+          );
+        }
+      });
+
+      document.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        if (e.touches.length === 1 && lastT1) {
+          const dx = e.touches[0].clientX - lastT1.x;
+          const dy = e.touches[0].clientY - lastT1.y;
+          rotY += dx * ROTATE_SPEED;
+          rotX += dy * ROTATE_SPEED;
+          rotX  = Math.max(-89, Math.min(89, rotX));
+          lastT1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        } else if (e.touches.length === 2 && lastT1 && lastT2) {
+          const pinch = Math.hypot(
+            e.touches[1].clientX - e.touches[0].clientX,
+            e.touches[1].clientY - e.touches[0].clientY
+          );
+          if (lastPinch) {
+            currentScale *= pinch / lastPinch;
+            currentScale  = Math.max(0.1, Math.min(10, currentScale));
+          }
+          lastPinch = pinch;
+          const midX  = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          const midY  = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          const pMidX = (lastT1.x + lastT2.x) / 2;
+          const pMidY = (lastT1.y + lastT2.y) / 2;
+          panX += (midX - pMidX) * PAN_SPEED;
+          panY -= (midY - pMidY) * PAN_SPEED;
+          lastT1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          lastT2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
+        }
+        applyTransform();
+      }, { passive: false });
+
+      // ─── Marker ──────────────────────────────────────────────
+      const marker = document.querySelector('a-nft');
+      marker.addEventListener('markerFound', () => {
+        debug.style.borderLeft = '4px solid lime';
+        console.log('🎯 FOUND');
+      });
+      marker.addEventListener('markerLost', () => {
+        debug.style.borderLeft = '4px solid red';
+        console.log('❌ LOST');
+      });
+    </script>
+  </body>
+</html>
