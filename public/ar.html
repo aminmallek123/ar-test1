@@ -3,7 +3,6 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="permissions-policy" content="camera=*; microphone=*" />
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.5/aframe/build/aframe-ar-nft.js"></script>
     <style>
@@ -295,33 +294,6 @@
       }, { passive: false });
 
       console.log('✅ AR App initialized');
-
-      // ─── Camera Permission Handler ───────────────────────────
-      // Request camera permission explicitly
-      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-        .then(stream => {
-          stream.getTracks().forEach(track => track.stop());
-          console.log('✅ Camera permission granted');
-        })
-        .catch(err => {
-          console.error('❌ Camera error:', err);
-          let errorMsg = '❌ Camera error!<br>';
-          
-          if (err.name === 'NotAllowedError') {
-            errorMsg += 'Permission refusée!<br>Autorisez la caméra.';
-          } else if (err.name === 'NotReadableError') {
-            errorMsg += 'Camera en utilisation!<br>Fermez les autres apps.';
-          } else if (err.name === 'NotFoundError') {
-            errorMsg += 'Caméra non trouvée!<br>Vérifiez l\'appareil.';
-          } else if (err.name === 'TypeError') {
-            errorMsg += 'Erreur HTTPS!<br>Utilisez HTTPS.';
-          } else {
-            errorMsg += 'Erreur caméra: ' + err.name;
-          }
-          
-          debug.innerHTML = errorMsg;
-          alert('⚠️ Erreur caméra: ' + err.name + '\n\n' + err.message);
-        });
     </script>
   </body>
 </html>
