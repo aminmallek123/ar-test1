@@ -6,7 +6,8 @@
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.5/aframe/build/aframe-ar-nft.js"></script>
     <style>
-      body { margin: 0; overflow: hidden; }
+      body { margin: 0; overflow: hidden; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; background: #e8e8e8; }
+      canvas { image-rendering: auto; image-rendering: crisp-edges; }
       .arjs-loader {
         height: 100%; width: 100%; position: absolute;
         top: 0; left: 0; background-color: rgba(0,0,0,0.8);
@@ -21,6 +22,7 @@
         padding: 8px 16px; border-radius: 20px;
         font-size: 12px; z-index: 9999;
         pointer-events: none; text-align: center;
+        display: none;
       }
       #debug {
         position: fixed; top: 10px; left: 10px;
@@ -28,6 +30,8 @@
         padding: 8px 12px; font-size: 11px;
         z-index: 9999; border-radius: 6px;
         pointer-events: none;
+        font-family: monospace;
+        display: none;
       }
     </style>
   </head>
@@ -41,227 +45,255 @@
 
     <a-scene
       vr-mode-ui="enabled: false;"
-      renderer="antialias: true; alpha: true; colorManagement: false;"
-      embedded
+      renderer="antialias: true; alpha: true; colorManagement: true; precision: highp; pixelRatio: 2; sortObjects: true; maxPixelRatio: 2"
       arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
+      embedded
     >
       <a-assets timeout="30000">
         <a-asset-item id="myModel" src="/models/object_0.glb"></a-asset-item>
       </a-assets>
 
+      <!-- MAXIMUM lighting for ultra-vibrant colors -->
+      <a-light type="ambient" intensity="3.0" color="#ffffff"></a-light>
+      <a-light type="directional" intensity="1.5" position="5 10 5" color="#ffffff"></a-light>
+      <a-light type="directional" intensity="1.3" position="-5 8 -5" color="#ffffff"></a-light>
+      <a-light type="point" intensity="1.0" position="0 5 0" color="#ffffff"></a-light>
+
+      <!-- NFT Marker Detection -->
       <a-nft
         type="nft"
         url="/markers/uno"
         smooth="true"
-        smoothcount="20"
-        smoothtolerance="0.5"
-        smooththreshold="10"
+        smoothcount="50"
+        smoothtolerance="0.001"
       >
-        <a-entity id="pivot">
-          <a-entity
-            id="model3d"
-            gltf-model="#myModel"
-            position="0 0 0"
-            rotation="-90 0 0"
-            scale="1 1 1"
-          ></a-entity>
-        </a-entity>
+        <!-- 3D Model appears only when marker detected -->
+        <a-entity id="model3d" gltf-model="#myModel" scale="150 150 150" rotation="0 0 0" position="0 0 0"></a-entity>
       </a-nft>
 
-      <a-entity camera></a-entity>
+      <a-camera position="0 0 0"></a-camera>
     </a-scene>
 
     <script>
       const scene   = document.querySelector('a-scene');
       const modelEl = document.querySelector('#model3d');
-      const pivot   = document.querySelector('#pivot');
       const debug   = document.getElementById('debug');
+      const nftEl   = document.querySelector('a-nft');
 
-      scene.addEventListener('loaded', () => {
-        document.querySelector('.arjs-loader').style.display = 'none';
-      });
+      debug.innerHTML = '⏳ Initializing... waiting for NFT marker...';
 
-      // ─── State ───────────────────────────────────────────────
-      let rotX = 0, rotY = 0;
-      let panX = 0, panY = 0;
-      let currentScale = 1;
-      let baseScale    = 1;
-
-      function applyTransform() {
-        pivot.object3D.position.set(panX, panY, 0);
-        modelEl.object3D.rotation.set(
-          THREE.MathUtils.degToRad(rotX - 90),
-          THREE.MathUtils.degToRad(rotY),
-          0
-        );
-        const s = baseScale * currentScale;
-        modelEl.object3D.scale.set(s, s, s);
-      }
-
-      // ─── Model loaded ────────────────────────────────────────
+      // ─── Model Loaded ────────────────────────────────────────
       modelEl.addEventListener('model-loaded', () => {
+        console.log('✅ Model loaded!');
         const mesh = modelEl.getObject3D('mesh');
-        if (!mesh) { debug.innerHTML = '❌ No mesh!'; return; }
+        
+        if (!mesh) {
+          debug.innerHTML = '❌ Mesh not found!';
+          console.error('No mesh in model');
+          return;
+        }
 
         let meshCount = 0;
+        let materialCount = 0;
 
-        // ✅ KEY FIX: Convert to MeshBasicMaterial to show original colors
+        // AUTO-CENTER AND MAINTAIN ORIGINAL DIMENSIONS
+        const box = new THREE.Box3().setFromObject(mesh);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        
+        console.log(`📏 Original dimensions - Width: ${size.x.toFixed(2)}, Height: ${size.y.toFixed(2)}, Depth: ${size.z.toFixed(2)}`);
+        
+        // Center the model but keep original size
+        mesh.position.sub(center);
+
+        // Apply MeshBasicMaterial to all meshes
         mesh.traverse((node) => {
           if (node.isMesh) {
             meshCount++;
-            node.frustumCulled = false;
+            
+            const materialsArray = Array.isArray(node.material) ? node.material : [node.material];
+            
+            materialsArray.forEach((oldMat, idx) => {
+              const newMat = new THREE.MeshBasicMaterial({
+                side: THREE.DoubleSide,
+                wireframe: false,
+                fog: false,
+                toneMapped: true
+              });
 
-            const mats = Array.isArray(node.material) ? node.material : [node.material];
-
-            mats.forEach((mat, i) => {
-              // ✅ Create a new MeshBasicMaterial keeping the original texture/color
-              const basicMat = new THREE.MeshBasicMaterial();
-
-              // Copy color texture (the most important one)
-              if (mat.map) {
-                basicMat.map = mat.map;
-                basicMat.map.encoding = THREE.LinearEncoding;
-                basicMat.map.needsUpdate = true;
-              } else if (mat.color) {
-                basicMat.color = mat.color;
+              // Copy color with MAXIMUM brightness boost
+              if (oldMat.color) {
+                newMat.color.copy(oldMat.color);
+                // MAXIMUM color boost for maximum vibrant display
+                newMat.color.multiplyScalar(2.5);
+              } else {
+                newMat.color.set(0xffffff);
               }
 
-              // Copy transparency if needed
-              basicMat.transparent = mat.transparent || false;
-              basicMat.opacity     = mat.opacity     || 1.0;
-              basicMat.side        = THREE.DoubleSide;
-              basicMat.needsUpdate = true;
+              // Copy and optimize texture for sharpness
+              if (oldMat.map) {
+                newMat.map = oldMat.map;
+                newMat.map.minFilter = THREE.LinearMipmapLinearFilter;
+                newMat.map.magFilter = THREE.LinearFilter;
+                newMat.map.anisotropy = 16;
+                newMat.map.encoding = THREE.sRGBEncoding;
+              }
 
-              // Replace material
+              // Improve material quality for professional rendering
+              newMat.flatShading = false;
+              newMat.dithering = true;
+
+              // Copy transparency
+              if (oldMat.transparent) {
+                newMat.transparent = true;
+                newMat.opacity = oldMat.opacity || 1.0;
+              }
+
+              newMat.needsUpdate = true;
+              materialCount++;
+
               if (Array.isArray(node.material)) {
-                node.material[i] = basicMat;
+                node.material[idx] = newMat;
               } else {
-                node.material = basicMat;
+                node.material = newMat;
               }
             });
           }
         });
 
-        // Auto scale
-        const box = new THREE.Box3().setFromObject(mesh);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const maxDim = Math.max(size.x, size.y, size.z);
-        baseScale = 160 / maxDim;
-
-        // Center + lift
-        const center = new THREE.Vector3();
-        box.getCenter(center);
-        modelEl.object3D.position.set(
-          -center.x * baseScale,
-          -center.y * baseScale,
-          (size.z * baseScale) / 2
-        );
-
-        applyTransform();
-
-        debug.innerHTML = `✅ Colors fixed!<br>📦 Meshes: ${meshCount}<br>📐 Scale: ${baseScale.toFixed(3)}`;
-        console.log(`✅ Converted ${meshCount} meshes to MeshBasicMaterial`);
+        debug.innerHTML = `✅ Model Ready!<br>Meshes: ${meshCount}<br>Materials: ${materialCount}<br>Size: ${size.x.toFixed(1)}×${size.y.toFixed(1)}×${size.z.toFixed(1)}`;
+        console.log(`✅ Model ready: ${meshCount} meshes, ${materialCount} materials with colors`);
       });
 
       modelEl.addEventListener('model-error', (e) => {
-        debug.innerHTML = `❌ Error: ${JSON.stringify(e.detail)}`;
+        console.error('Model error:', e.detail);
+        debug.innerHTML = `❌ Error: ${e.detail}`;
       });
 
-      // ─── Mouse: Rotate (left) + Pan (right) ─────────────────
+      // ─── Marker Events ──────────────────────────────────────
+      nftEl.addEventListener('markerFound', () => {
+        console.log('✅ NFT Marker Found!');
+        modelEl.setAttribute('visible', 'true');
+        debug.innerHTML = '✅ Marker Detected! Model Visible';
+      });
+
+      nftEl.addEventListener('markerLost', () => {
+        console.log('❌ NFT Marker Lost');
+        modelEl.setAttribute('visible', 'false');
+        debug.innerHTML = '⏳ Waiting for marker...';
+      });
+
+      // ─── Scene Ready ────────────────────────────────────────
+      scene.addEventListener('loaded', () => {
+        document.querySelector('.arjs-loader').style.display = 'none';
+        console.log('🎬 AR Scene loaded');
+        
+        // Hide model until marker is detected
+        modelEl.setAttribute('visible', 'false');
+        
+        // Optimize renderer for MAXIMUM color display
+        const renderer = scene.renderer;
+        if (renderer) {
+          renderer.outputEncoding = THREE.sRGBEncoding;
+          renderer.toneMapping = THREE.ACESFilmicToneMapping;
+          renderer.toneMappingExposure = 2.5;
+          
+          console.log('✅ Renderer optimized for MAXIMUM VIBRANT colors');
+        }
+      });
+
+      // ─── Mouse Controls ─────────────────────────────────────
       let mouseDown = false, rightClick = false;
       let lastX = 0, lastY = 0;
-      const ROTATE_SPEED = 0.4;
-      const PAN_SPEED    = 0.15;
+      let rotX = 0, rotY = 0;
+      let panX = 0, panY = 0;
+      let scale = 1; // Professional size
+      
+      // Smoothing for stable display
+      let smoothedRotX = 0, smoothedRotY = 0;
+      let smoothedPanX = 0, smoothedPanY = 0;
+      let smoothedScale = 1;
+      const SMOOTHNESS = 0.05; // Ultra-smooth, ultra-stable
 
       document.addEventListener('contextmenu', e => e.preventDefault());
+      
       document.addEventListener('mousedown', (e) => {
-        mouseDown = true; rightClick = e.button === 2;
-        lastX = e.clientX; lastY = e.clientY;
+        mouseDown = true;
+        rightClick = e.button === 2;
+        lastX = e.clientX;
+        lastY = e.clientY;
       });
-      document.addEventListener('mouseup', () => mouseDown = false);
+
+      document.addEventListener('mouseup', () => { mouseDown = false; });
+
       document.addEventListener('mousemove', (e) => {
         if (!mouseDown) return;
+        
         const dx = e.clientX - lastX;
         const dy = e.clientY - lastY;
-        lastX = e.clientX; lastY = e.clientY;
+        lastX = e.clientX;
+        lastY = e.clientY;
+
         if (rightClick) {
-          panX += dx * PAN_SPEED;
-          panY -= dy * PAN_SPEED;
+          panX += dx * 0.1;
+          panY -= dy * 0.1;
         } else {
-          rotY += dx * ROTATE_SPEED;
-          rotX += dy * ROTATE_SPEED;
-          rotX  = Math.max(-89, Math.min(89, rotX));
+          rotY += dx * 0.5;
+          rotX += dy * 0.5;
+          rotX = Math.max(-89, Math.min(89, rotX));
         }
-        applyTransform();
+
+        updateTransform();
       });
 
-      // ─── Scroll: Zoom ────────────────────────────────────────
       document.addEventListener('wheel', (e) => {
         e.preventDefault();
-        currentScale *= e.deltaY > 0 ? 0.95 : 1.05;
-        currentScale  = Math.max(0.1, Math.min(10, currentScale));
-        applyTransform();
+        scale *= e.deltaY > 0 ? 0.9 : 1.1;
+        scale = Math.max(0.5, Math.min(20, scale)); // Larger max zoom
+        updateTransform();
       }, { passive: false });
 
-      // ─── Touch controls ──────────────────────────────────────
-      let lastT1 = null, lastT2 = null, lastPinch = null;
+      function updateTransform() {
+        // Apply exponential smoothing to prevent vibration
+        smoothedRotX += (rotX - smoothedRotX) * SMOOTHNESS;
+        smoothedRotY += (rotY - smoothedRotY) * SMOOTHNESS;
+        smoothedPanX += (panX - smoothedPanX) * SMOOTHNESS;
+        smoothedPanY += (panY - smoothedPanY) * SMOOTHNESS;
+        smoothedScale += (scale - smoothedScale) * SMOOTHNESS;
 
+        modelEl.object3D.position.set(smoothedPanX, smoothedPanY, 0);
+        modelEl.object3D.rotation.order = 'YXZ';
+        modelEl.object3D.rotation.set(
+          THREE.MathUtils.degToRad(smoothedRotX),
+          THREE.MathUtils.degToRad(smoothedRotY),
+          0
+        );
+        modelEl.object3D.scale.set(smoothedScale, smoothedScale, smoothedScale);
+      }
+
+      // ─── Touch Controls ─────────────────────────────────────
       document.addEventListener('touchstart', (e) => {
         if (e.touches.length === 1) {
-          lastT1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-          lastT2 = null; lastPinch = null;
-        } else if (e.touches.length === 2) {
-          lastT1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-          lastT2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
-          lastPinch = Math.hypot(
-            e.touches[1].clientX - e.touches[0].clientX,
-            e.touches[1].clientY - e.touches[0].clientY
-          );
+          lastX = e.touches[0].clientX;
+          lastY = e.touches[0].clientY;
         }
       });
 
       document.addEventListener('touchmove', (e) => {
         e.preventDefault();
-        if (e.touches.length === 1 && lastT1) {
-          const dx = e.touches[0].clientX - lastT1.x;
-          const dy = e.touches[0].clientY - lastT1.y;
-          rotY += dx * ROTATE_SPEED;
-          rotX += dy * ROTATE_SPEED;
-          rotX  = Math.max(-89, Math.min(89, rotX));
-          lastT1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        } else if (e.touches.length === 2 && lastT1 && lastT2) {
-          const pinch = Math.hypot(
-            e.touches[1].clientX - e.touches[0].clientX,
-            e.touches[1].clientY - e.touches[0].clientY
-          );
-          if (lastPinch) {
-            currentScale *= pinch / lastPinch;
-            currentScale  = Math.max(0.1, Math.min(10, currentScale));
-          }
-          lastPinch = pinch;
-          const midX  = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-          const midY  = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-          const pMidX = (lastT1.x + lastT2.x) / 2;
-          const pMidY = (lastT1.y + lastT2.y) / 2;
-          panX += (midX - pMidX) * PAN_SPEED;
-          panY -= (midY - pMidY) * PAN_SPEED;
-          lastT1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-          lastT2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
-        }
-        applyTransform();
+        const touch = e.touches[0];
+        const dx = touch.clientX - lastX;
+        const dy = touch.clientY - lastY;
+        lastX = touch.clientX;
+        lastY = touch.clientY;
+
+        rotY += dx * 0.5;
+        rotX += dy * 0.5;
+        rotX = Math.max(-89, Math.min(89, rotX));
+        updateTransform();
       }, { passive: false });
 
-      // ─── Marker ──────────────────────────────────────────────
-      const marker = document.querySelector('a-nft');
-      marker.addEventListener('markerFound', () => {
-        debug.style.borderLeft = '4px solid lime';
-        console.log('🎯 FOUND');
-      });
-      marker.addEventListener('markerLost', () => {
-        debug.style.borderLeft = '4px solid red';
-        console.log('❌ LOST');
-      });
+      console.log('✅ AR App initialized');
     </script>
   </body>
 </html>
