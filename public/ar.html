@@ -67,7 +67,7 @@
         smoothtolerance="0.1"
       >
         <!-- 3D Model appears only when marker detected -->
-        <a-entity id="model3d" gltf-model="#myModel" scale="150 150 150" rotation="0 0 0" position="0 0 0"></a-entity>
+        <a-entity id="model3d" gltf-model="#myModel" scale="120 120 120" rotation="0 0 0" position="0 0 0"></a-entity>
       </a-nft>
 
       <a-camera position="0 0 0"></a-camera>
@@ -303,7 +303,11 @@
 
           rotY += dx * 0.8;
           rotX += dy * 0.8;
-          rotX = Math.max(-89, Math.min(89, rotX));
+          
+          // Limit rotation to prevent going off-screen
+          rotX = Math.max(-180, Math.min(180, rotX));
+          rotY = Math.max(-180, Math.min(180, rotY));
+          
           updateTransform();
         } else if (e.touches.length === 2) {
           // Two fingers - zoom
@@ -320,7 +324,11 @@
 
       document.addEventListener('touchend', () => {
         touchStartDistance = 0;
-        console.log('📱 Touch ended');
+        // Reset rotation values to keep object centered
+        rotX = 0;
+        rotY = 0;
+        updateTransform();
+        console.log('📱 Touch ended - object reset to center');
       });
 
       console.log('✅ AR App initialized');
