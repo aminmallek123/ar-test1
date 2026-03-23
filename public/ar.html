@@ -298,15 +298,29 @@
 
       // ─── Camera Permission Handler ───────────────────────────
       // Request camera permission explicitly
-      navigator.mediaDevices.getUserMedia({ video: true })
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
         .then(stream => {
           stream.getTracks().forEach(track => track.stop());
           console.log('✅ Camera permission granted');
         })
         .catch(err => {
-          console.error('❌ Camera permission denied:', err);
-          debug.innerHTML = '❌ Permission refusée!<br>Autorisez la caméra dans les paramètres du téléphone';
-          alert('⚠️ Permission denied: Please allow camera access in your phone settings to use AR');
+          console.error('❌ Camera error:', err);
+          let errorMsg = '❌ Camera error!<br>';
+          
+          if (err.name === 'NotAllowedError') {
+            errorMsg += 'Permission refusée!<br>Autorisez la caméra.';
+          } else if (err.name === 'NotReadableError') {
+            errorMsg += 'Camera en utilisation!<br>Fermez les autres apps.';
+          } else if (err.name === 'NotFoundError') {
+            errorMsg += 'Caméra non trouvée!<br>Vérifiez l\'appareil.';
+          } else if (err.name === 'TypeError') {
+            errorMsg += 'Erreur HTTPS!<br>Utilisez HTTPS.';
+          } else {
+            errorMsg += 'Erreur caméra: ' + err.name;
+          }
+          
+          debug.innerHTML = errorMsg;
+          alert('⚠️ Erreur caméra: ' + err.name + '\n\n' + err.message);
         });
     </script>
   </body>
