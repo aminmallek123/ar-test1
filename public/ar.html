@@ -326,23 +326,23 @@
       console.log('✅ AR App initialized');
 
       // ─── Camera Permission Handler ───────────────────────────
-      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-        .then(stream => {
-          stream.getTracks().forEach(track => track.stop());
-          console.log('✅ Camera permission granted');
-          debug.innerHTML = '✅ Ready! Touch to control<br>1 finger: rotate<br>2 fingers: zoom';
-        })
-        .catch(err => {
-          console.error('❌ Camera error:', err);
+      // navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      //   .then(stream => {
+      //     stream.getTracks().forEach(track => track.stop());
+      //     console.log('✅ Camera permission granted');
+      //     debug.innerHTML = '✅ Ready! Touch to control<br>1 finger: rotate<br>2 fingers: zoom';
+      //   })
+      //   .catch(err => {
+      //     console.error('❌ Camera error:', err);
           
-          if (err.name === 'NotReadableError') {
-            debug.innerHTML = '❌ Camera busy!<br>Close other apps.';
-          } else if (err.name === 'NotAllowedError') {
-            debug.innerHTML = '❌ Permission denied!<br>Autorisez la caméra.';
-          } else {
-            debug.innerHTML = '❌ Camera error: ' + err.name;
-          }
-        });
+      //     if (err.name === 'NotReadableError') {
+      //       debug.innerHTML = '❌ Camera busy!<br>Close other apps.';
+      //     } else if (err.name === 'NotAllowedError') {
+      //       debug.innerHTML = '❌ Permission denied!<br>Autorisez la caméra.';
+      //     } else {
+      //       debug.innerHTML = '❌ Camera error: ' + err.name;
+      //     }
+      //   });
     </script>
   </body>
 </html>
