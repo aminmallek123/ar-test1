@@ -173,13 +173,13 @@
       nftEl.addEventListener('markerFound', () => {
         console.log('✅ NFT Marker Found!');
         modelEl.setAttribute('visible', 'true');
-        debug.innerHTML = '✅ Marker Detected! Model Visible';
+        debug.innerHTML = '✅ Marker Detected!';
       });
 
       nftEl.addEventListener('markerLost', () => {
-        console.log('❌ NFT Marker Lost');
-        modelEl.setAttribute('visible', 'false');
-        debug.innerHTML = '⏳ Waiting for marker...';
+        console.log('⚠️ NFT Marker Lost');
+        // KEEP MODEL VISIBLE - don't hide it
+        // debug.innerHTML = '⏳ Waiting for marker...';
       });
 
       // ─── Scene Ready ────────────────────────────────────────
@@ -324,11 +324,8 @@
 
       document.addEventListener('touchend', () => {
         touchStartDistance = 0;
-        // Reset rotation values to keep object centered
-        rotX = 0;
-        rotY = 0;
-        updateTransform();
-        console.log('📱 Touch ended - object reset to center');
+        // Do NOT reset rotation - keep object in its current state
+        console.log('📱 Touch ended');
       });
 
       console.log('✅ AR App initialized');
