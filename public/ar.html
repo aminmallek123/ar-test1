@@ -66,8 +66,8 @@
         smoothcount="2"
         smoothtolerance="0.05"
       >
-        <!-- 3D Model appears only when marker detected -->
-        <a-entity id="model3d" gltf-model="#myModel" scale="80 80 80" rotation="0 0 0" position="0 0 0"></a-entity>
+        <!-- 3D Model appears only when marker detected - Positioned ABOVE the marker -->
+        <a-entity id="model3d" gltf-model="#myModel" scale="80 80 80" rotation="0 0 0" position="0 3 0" visible="false"></a-entity>
       </a-nft>
 
       <a-camera position="0 0 0"></a-camera>
