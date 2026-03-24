@@ -43,8 +43,9 @@
     </div>
 
     <a-scene
+      id="arScene"
       vr-mode-ui="enabled: false;"
-      renderer="antialias: true; alpha: true; colorManagement: true; precision: highp; pixelRatio: 2; sortObjects: true; maxPixelRatio: 2"
+      renderer="antialias: true; alpha: true; colorManagement: true"
       arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
       embedded
     >
@@ -52,11 +53,10 @@
         <a-asset-item id="myModel" src="/models/object_0.glb"></a-asset-item>
       </a-assets>
 
-      <!-- MAXIMUM lighting for ultra-vibrant colors -->
-      <a-light type="ambient" intensity="3.0" color="#ffffff"></a-light>
-      <a-light type="directional" intensity="1.5" position="5 10 5" color="#ffffff"></a-light>
-      <a-light type="directional" intensity="1.3" position="-5 8 -5" color="#ffffff"></a-light>
-      <a-light type="point" intensity="1.0" position="0 5 0" color="#ffffff"></a-light>
+      <!-- Optimized Lighting (reduced for low-end devices) -->
+      <a-light type="ambient" intensity="2.0" color="#ffffff"></a-light>
+      <a-light type="directional" intensity="1.2" position="5 10 5" color="#ffffff"></a-light>
+      <a-light type="directional" intensity="0.8" position="-5 8 -5" color="#ffffff"></a-light>
 
       <!-- NFT Marker Detection -->
       <a-nft
@@ -66,20 +66,55 @@
         smoothcount="2"
         smoothtolerance="0.05"
       >
-        <!-- 3D Model appears only when marker detected - Positioned ABOVE the marker -->
-        <a-entity id="model3d" gltf-model="#myModel" scale="80 80 80" rotation="0 0 0" position="0 -0.5 0" visible="false"></a-entity>
+        <!-- 3D Model appears only when marker detected -->
+        <a-entity id="model3d" gltf-model="#myModel" scale="80 80 80" rotation="0 0 0" position="0 0 0"></a-entity>
       </a-nft>
 
       <a-camera position="0 0 0"></a-camera>
     </a-scene>
 
     <script>
+      // ─── Device Detection & Optimization ──────────────────
+      function detectDevicePerformance() {
+        const ua = navigator.userAgent.toLowerCase();
+        const isLowEndDevice = /xiaomi|budget|galaxy j|moto g|redmi|realme 5|realme 6/i.test(ua);
+        const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);
+        
+        // Check GPU capabilities
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        const maxPixelRatio = window.devicePixelRatio || 1;
+        const maxTextureSize = gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) : 2048;
+        
+        const config = {
+          isLowEnd: isLowEndDevice,
+          isMobile: isMobile,
+          pixelRatio: isLowEndDevice ? 1 : Math.min(maxPixelRatio, 2),
+          precision: isLowEndDevice ? 'lowp' : 'mediump',
+          anisotropy: isLowEndDevice ? 1 : 16,
+          maxTextureSize: maxTextureSize,
+          antialias: !isLowEndDevice
+        };
+        
+        console.log(`📱 Device: ${isLowEndDevice ? 'LOW-END' : 'HIGH-END'} | Ratio: ${config.pixelRatio} | Precision: ${config.precision}`);
+        return config;
+      }
+      
+      const deviceConfig = detectDevicePerformance();
+      
+      // Update renderer attributes dynamically
+      const arScene = document.querySelector('#arScene');
+      let rendererAttrs = `antialias: ${deviceConfig.antialias}; alpha: true; colorManagement: true; pixelRatio: ${deviceConfig.pixelRatio}; precision: ${deviceConfig.precision};`;
+      arScene.setAttribute('renderer', rendererAttrs);
+
       const scene   = document.querySelector('a-scene');
       const modelEl = document.querySelector('#model3d');
       const debug   = document.getElementById('debug');
       const nftEl   = document.querySelector('a-nft');
 
-      debug.innerHTML = '⏳ Initializing... waiting for NFT marker...';
+      // Show device info on debug panel
+      debug.style.display = 'block';
+      debug.innerHTML = `📱 Device: ${deviceConfig.isLowEnd ? 'LOW-END' : 'HIGH-END'}<br>Ratio: ${deviceConfig.pixelRatio}<br>Precision: ${deviceConfig.precision}<br>⏳ Initializing...`;
 
       // ─── Model Loaded ────────────────────────────────────────
       modelEl.addEventListener('model-loaded', () => {
@@ -134,13 +169,13 @@
                 newMat.map = oldMat.map;
                 newMat.map.minFilter = THREE.LinearMipmapLinearFilter;
                 newMat.map.magFilter = THREE.LinearFilter;
-                newMat.map.anisotropy = 16;
+                newMat.map.anisotropy = deviceConfig.anisotropy;
                 newMat.map.encoding = THREE.sRGBEncoding;
               }
 
-              // Improve material quality for professional rendering
-              newMat.flatShading = false;
-              newMat.dithering = true;
+              // Improve material quality (reduce for low-end)
+              newMat.flatShading = deviceConfig.isLowEnd ? true : false;
+              newMat.dithering = !deviceConfig.isLowEnd;
 
               // Copy transparency
               if (oldMat.transparent) {
@@ -166,38 +201,63 @@
 
       modelEl.addEventListener('model-error', (e) => {
         console.error('Model error:', e.detail);
-        debug.innerHTML = `❌ Error: ${e.detail}`;
+        debug.innerHTML = `❌ Model Error!<br>${e.detail}`;
+      });
+      
+      // WebGL context loss recovery
+      window.addEventListener('webglcontextlost', (e) => {
+        console.warn('⚠️ WebGL context lost');
+        e.preventDefault();
+      });
+      
+      window.addEventListener('webglcontextrestored', () => {
+        console.log('✅ WebGL context restored');
       });
 
       // ─── Marker Events ──────────────────────────────────────
       nftEl.addEventListener('markerFound', () => {
         console.log('✅ NFT Marker Found!');
         modelEl.setAttribute('visible', 'true');
-        debug.innerHTML = '✅ Marker Detected!';
+        debug.innerHTML = '✅ Marker Detected! Rotate to explore';
       });
 
       nftEl.addEventListener('markerLost', () => {
         console.log('⚠️ NFT Marker Lost');
-        // KEEP MODEL VISIBLE - don't hide it
-        // debug.innerHTML = '⏳ Waiting for marker...';
+        modelEl.setAttribute('visible', 'false');
+        debug.innerHTML = '⏳ Aiming at marker...';
+      });
+      
+      // Error handling for marker tracking
+      scene.addEventListener('error', (e) => {
+        console.error('❌ Scene error:', e);
+        debug.innerHTML = '❌ Error detected. Check console.';
       });
 
       // ─── Scene Ready ────────────────────────────────────────
       scene.addEventListener('loaded', () => {
         document.querySelector('.arjs-loader').style.display = 'none';
         console.log('🎬 AR Scene loaded');
+        debug.innerHTML = '⏳ Aiming at marker...';
         
-        // Show model immediately (not waiting for marker)
-        modelEl.setAttribute('visible', 'true');
-        
-        // Optimize renderer for MAXIMUM color display
+        // Optimize renderer for device capability
         const renderer = scene.renderer;
         if (renderer) {
-          renderer.outputEncoding = THREE.sRGBEncoding;
-          renderer.toneMapping = THREE.ACESFilmicToneMapping;
-          renderer.toneMappingExposure = 2.5;
-          
-          console.log('✅ Renderer optimized for MAXIMUM VIBRANT colors');
+          try {
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            
+            if (!deviceConfig.isLowEnd) {
+              renderer.toneMapping = THREE.ACESFilmicToneMapping;
+              renderer.toneMappingExposure = 2.5;
+              console.log('✅ Full rendering optimized');
+            } else {
+              // Lightweight rendering for low-end
+              renderer.toneMapping = THREE.LinearToneMapping;
+              renderer.toneMappingExposure = 1.0;
+              console.log('✅ Lightweight rendering for low-end device');
+            }
+          } catch (e) {
+            console.warn('⚠️ Some renderer settings not supported:', e.message);
+          }
         }
       });
 
