@@ -45,8 +45,8 @@
     <a-scene
       id="arScene"
       vr-mode-ui="enabled: false;"
-      renderer="antialias: true; alpha: true; colorManagement: true"
-      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
+      renderer="antialias: false; alpha: true; colorManagement: false"
+      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false; patternRatioWidth: 0.5;"
       embedded
     >
       <a-assets timeout="30000">
@@ -63,58 +63,96 @@
         type="nft"
         url="/markers/uno"
         smooth="true"
-        smoothcount="2"
-        smoothtolerance="0.05"
+        smoothcount="5"
+        smoothtolerance="0.01"
+        emitevents="true"
       >
         <!-- 3D Model appears only when marker detected -->
         <!-- Scale will be dynamically adjusted in JavaScript based on device screen size -->
         <a-entity id="model3d" gltf-model="#myModel" scale="1 1 1" rotation="0 0 0" position="0 0 0"></a-entity>
       </a-nft>
 
+      <!-- Fallback entity for world mode (visible when marker not found after timeout) -->
+      <a-entity id="worldModel" position="0 0 -2" visible="false">
+        <a-entity id="modelWorld" gltf-model="#myModel" scale="1 1 1" rotation="0 0 0" position="0 0 0"></a-entity>
+      </a-entity>
+
       <a-camera position="0 0 0"></a-camera>
     </a-scene>
 
     <script>
+      // ─── Global State ────────────────────────────────────────
+      let markerFound = false;
+      let markerDetectionTimeout = null;
+      let markerLastSeen = Date.now();
+      const MARKER_TIMEOUT = 8000; // 8 seconds without marker = switch to world mode
+      
       // ─── Device Detection & Optimization ──────────────────
       function detectDevicePerformance() {
         const ua = navigator.userAgent.toLowerCase();
-        const isLowEndDevice = /xiaomi|budget|galaxy j|moto g|redmi|realme 5|realme 6/i.test(ua);
+        const isLowEndDevice = /xiaomi|budget|galaxy j|moto g|redmi|realme 5|realme 6|blackberry|nokia|sony ericsson/i.test(ua);
         const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);
         
+        // Check screen size - small screens are often paired with low-end chips
+        const screenWidth = Math.min(window.screen.width, window.screen.height);
+        const isSmallScreen = screenWidth < 450;
+        
         // Check GPU capabilities
-        const canvas = document.createElement('canvas');
-        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        let gl;
+        try {
+          const canvas = document.createElement('canvas');
+          gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        } catch (e) {
+          console.warn('WebGL creation failed:', e);
+          gl = null;
+        }
+        
         const maxPixelRatio = window.devicePixelRatio || 1;
         const maxTextureSize = gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) : 2048;
+        const maxRenderbufferSize = gl ? gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) : 2048;
+        const hasLowGPU = maxTextureSize <= 1024 || maxRenderbufferSize <= 1024;
+        
+        // Aggressive optimization for small screens
+        const effectivelyLowEnd = isLowEndDevice || hasLowGPU || isSmallScreen;
         
         const config = {
-          isLowEnd: isLowEndDevice,
+          isLowEnd: effectivelyLowEnd,
           isMobile: isMobile,
-          pixelRatio: isLowEndDevice ? 1 : Math.min(maxPixelRatio, 2),
-          precision: isLowEndDevice ? 'lowp' : 'mediump',
-          anisotropy: isLowEndDevice ? 1 : 16,
+          isSmallScreen: isSmallScreen,
+          screenWidth: screenWidth,
+          pixelRatio: effectivelyLowEnd ? 0.75 : Math.min(maxPixelRatio, 1.5),
+          precision: effectivelyLowEnd ? 'lowp' : 'mediump',
+          anisotropy: effectivelyLowEnd ? 1 : 4,
           maxTextureSize: maxTextureSize,
-          antialias: !isLowEndDevice
+          antialias: !effectivelyLowEnd,
+          hasWebGL: !!gl,
+          hasLowGPU: hasLowGPU
         };
         
-        console.log(`📱 Device: ${isLowEndDevice ? 'LOW-END' : 'HIGH-END'} | Ratio: ${config.pixelRatio} | Precision: ${config.precision}`);
+        console.log(`📱 Device: ${effectivelyLowEnd ? 'LOW-END' : 'HIGH-END'} | Screen: ${screenWidth}px | GPU: ${hasLowGPU ? 'LOW' : 'NORMAL'} | Ratio: ${config.pixelRatio}`);
         return config;
       }
       
       // ─── Responsive Scale Calculation ──────────────────────
-      function calculateAdaptiveScale() {
+      function calculateAdaptiveScale(deviceConfig) {
         const vw = window.innerWidth;
         const vh = window.innerHeight;
         const aspectRatio = vw / vh;
         
-        // Scale base on viewport size (empirically optimized for 40 80 80 reference)
+        // MORE AGGRESSIVE SCALING FOR SMALL SCREENS
         let baseScale = 40;
         
-        if (vw < 400) {
-          // Small devices (< 400px width)
-          baseScale = 30;
+        if (vw < 350) {
+          // Very small devices (< 350px width) - phones with very small screens
+          baseScale = 20;
+        } else if (vw < 400) {
+          // Small devices (350-400px width)
+          baseScale = 28;
+        } else if (vw < 500) {
+          // Mid-size devices (400-500px)
+          baseScale = 40;
         } else if (vw < 600) {
-          // Mid-size devices (400-600px)
+          // Larger phones (500-600px)
           baseScale = 50;
         } else if (vw < 1024) {
           // Tablets in portrait
@@ -127,47 +165,50 @@
         // Adjust for aspect ratio extremes
         if (aspectRatio > 2.0) {
           // Very wide screens (landscape)
-          baseScale *= 0.9;
+          baseScale *= 0.85;
         } else if (aspectRatio < 0.6) {
           // Very tall screens
-          baseScale *= 0.95;
+          baseScale *= 0.9;
         }
         
-        console.log(`📐 Viewport: ${vw}x${vh} | Aspect: ${aspectRatio.toFixed(2)} → Scale: ${baseScale.toFixed(1)}`);
+        // For low-end devices with small screens, be even more aggressive
+        if (deviceConfig.isSmallScreen && deviceConfig.isLowEnd) {
+          baseScale *= 0.8;
+        }
+        
+        console.log(`📐 Viewport: ${vw}x${vh} | Aspect: ${aspectRatio.toFixed(2)} | Scale: ${baseScale.toFixed(1)}`);
         return baseScale;
       }
       
       const deviceConfig = detectDevicePerformance();
-      const initialScale = calculateAdaptiveScale();
+      const initialScale = calculateAdaptiveScale(deviceConfig);
       
       // Update renderer attributes dynamically
       const arScene = document.querySelector('#arScene');
-      let rendererAttrs = `antialias: ${deviceConfig.antialias}; alpha: true; colorManagement: true; pixelRatio: ${deviceConfig.pixelRatio}; precision: ${deviceConfig.precision};`;
+      let rendererAttrs = `antialias: ${deviceConfig.antialias}; alpha: true; pixelRatio: ${deviceConfig.pixelRatio};`;
       arScene.setAttribute('renderer', rendererAttrs);
 
       const scene   = document.querySelector('a-scene');
       const modelEl = document.querySelector('#model3d');
+      const worldModelEl = document.querySelector('#modelWorld');
+      const worldContainer = document.querySelector('#worldModel');
       const debug   = document.getElementById('debug');
       const nftEl   = document.querySelector('a-nft');
 
       // Show device info on debug panel
       debug.style.display = 'block';
-      debug.innerHTML = `📱 Device: ${deviceConfig.isLowEnd ? 'LOW-END' : 'HIGH-END'}<br>Ratio: ${deviceConfig.pixelRatio}<br>Scale: ${initialScale.toFixed(1)}<br>⏳ Initializing...`;
+      debug.innerHTML = `📱 Device: ${deviceConfig.isLowEnd ? 'LOW-END' : 'HIGH-END'}<br>Screen: ${deviceConfig.screenWidth}px<br>Ratio: ${deviceConfig.pixelRatio}<br>Scale: ${initialScale.toFixed(1)}<br>⏳ Initializing...`;
 
-      // Set initial scale
+      // Set initial scale for marker model
       modelEl.setAttribute('scale', `${initialScale} ${initialScale} ${initialScale}`);
+      
+      // Set initial scale for world model
+      worldModelEl.setAttribute('scale', `${initialScale} ${initialScale} ${initialScale}`);
 
-      // ─── Model Loaded ────────────────────────────────────────
-      modelEl.addEventListener('model-loaded', () => {
-        console.log('✅ Model loaded!');
-        const mesh = modelEl.getObject3D('mesh');
+// ─── Apply Materials to Model ────────────────────────
+      function setupModelMaterials(mesh) {
+        if (!mesh) return { meshCount: 0, materialCount: 0 };
         
-        if (!mesh) {
-          debug.innerHTML = '❌ Mesh not found!';
-          console.error('No mesh in model');
-          return;
-        }
-
         let meshCount = 0;
         let materialCount = 0;
 
@@ -193,30 +234,27 @@
                 side: THREE.DoubleSide,
                 wireframe: false,
                 fog: false,
-                toneMapped: true
+                toneMapped: false
               });
 
-              // Copy color with MAXIMUM brightness boost
+              // Copy color with brightness boost
               if (oldMat.color) {
                 newMat.color.copy(oldMat.color);
-                // MAXIMUM color boost for maximum vibrant display
-                newMat.color.multiplyScalar(2.5);
+                newMat.color.multiplyScalar(2.0);
               } else {
                 newMat.color.set(0xffffff);
               }
 
-              // Copy and optimize texture for sharpness
+              // Copy and optimize texture
               if (oldMat.map) {
                 newMat.map = oldMat.map;
-                newMat.map.minFilter = THREE.LinearMipmapLinearFilter;
+                newMat.map.minFilter = THREE.LinearFilter;
                 newMat.map.magFilter = THREE.LinearFilter;
                 newMat.map.anisotropy = deviceConfig.anisotropy;
-                newMat.map.encoding = THREE.sRGBEncoding;
               }
 
-              // Improve material quality (reduce for low-end)
+              // Optimize material quality
               newMat.flatShading = deviceConfig.isLowEnd ? true : false;
-              newMat.dithering = !deviceConfig.isLowEnd;
 
               // Copy transparency
               if (oldMat.transparent) {
@@ -236,36 +274,81 @@
           }
         });
 
-        debug.innerHTML = `✅ Model Ready!<br>Meshes: ${meshCount}<br>Materials: ${materialCount}<br>Size: ${size.x.toFixed(1)}×${size.y.toFixed(1)}×${size.z.toFixed(1)}`;
-        console.log(`✅ Model ready: ${meshCount} meshes, ${materialCount} materials with colors`);
+        return { meshCount, materialCount, size };
+      }
+      
+      // ─── Model Loaded (Marker Mode) ──────────────────────────
+      modelEl.addEventListener('model-loaded', () => {
+        console.log('✅ Marker model loaded!');
+        const mesh = modelEl.getObject3D('mesh');
+        
+        if (!mesh) {
+          console.error('No mesh in model');
+          return;
+        }
+
+        const result = setupModelMaterials(mesh);
+        debug.innerHTML = `✅ Model Ready!<br>Meshes: ${result.meshCount}<br>Materials: ${result.materialCount}`;
+        console.log(`✅ Model ready: ${result.meshCount} meshes`);
       });
 
       modelEl.addEventListener('model-error', (e) => {
-        console.error('Model error:', e.detail);
-        debug.innerHTML = `❌ Model Error!<br>${e.detail}`;
-      });
-      
-      // WebGL context loss recovery
-      window.addEventListener('webglcontextlost', (e) => {
-        console.warn('⚠️ WebGL context lost');
-        e.preventDefault();
-      });
-      
-      window.addEventListener('webglcontextrestored', () => {
-        console.log('✅ WebGL context restored');
+        console.error('Marker model error:', e.detail);
+        debug.innerHTML = `❌ Model Error!<br>Marker: ${e.detail}`;
       });
 
-      // ─── Marker Events ──────────────────────────────────────
+      // ─── Model Loaded (World Mode Fallback) ──────────────────
+      worldModelEl.addEventListener('model-loaded', () => {
+        console.log('✅ World model loaded!');
+        const mesh = worldModelEl.getObject3D('mesh');
+        
+        if (!mesh) {
+          console.error('No mesh in world model');
+          return;
+        }
+
+        const result = setupModelMaterials(mesh);
+        console.log(`✅ World model ready: ${result.meshCount} meshes`);
+      });
+
+      worldModelEl.addEventListener('model-error', (e) => {
+        console.error('World model error:', e.detail);
+      });
+
+      // ─── Marker Events + Fallback Mode ──────────────────────
       nftEl.addEventListener('markerFound', () => {
         console.log('✅ NFT Marker Found!');
+        markerFound = true;
+        markerLastSeen = Date.now();
+        
+        // Switch from world mode to marker mode
         modelEl.setAttribute('visible', 'true');
-        debug.innerHTML = '✅ Marker Detected! Rotate to explore';
+        worldContainer.setAttribute('visible', 'false');
+        
+        // Clear timeout
+        if (markerDetectionTimeout) {
+          clearTimeout(markerDetectionTimeout);
+          markerDetectionTimeout = null;
+        }
+        
+        debug.innerHTML = '✅ Marker OK! 1 finger: rotate | 2 fingers: zoom';
       });
 
       nftEl.addEventListener('markerLost', () => {
         console.log('⚠️ NFT Marker Lost');
+        markerFound = false;
         modelEl.setAttribute('visible', 'false');
-        debug.innerHTML = '⏳ Aiming at marker...';
+        debug.innerHTML = '⏳ Marker lost... trying to find...';
+        
+        // Start fallback timer - if marker not found in Xms, switch to world mode
+        if (!markerDetectionTimeout) {
+          markerDetectionTimeout = setTimeout(() => {
+            console.log('⚠️ Marker not found for', MARKER_TIMEOUT / 1000, 's - switching to WORLD MODE');
+            worldContainer.setAttribute('visible', 'true');
+            debug.innerHTML = '📍 WORLD MODE - No marker detected. 1 finger: rotate | 2 fingers: zoom';
+            markerDetectionTimeout = null;
+          }, MARKER_TIMEOUT);
+        }
       });
       
       // Error handling for marker tracking
@@ -361,14 +444,29 @@
         smoothedPanY += (panY - smoothedPanY) * SMOOTHNESS;
         smoothedScale += (scale - smoothedScale) * SMOOTHNESS;
 
-        modelEl.object3D.position.set(smoothedPanX, smoothedPanY, 0);
-        modelEl.object3D.rotation.order = 'YXZ';
-        modelEl.object3D.rotation.set(
+        // Update both marker and world models
+        const position = new THREE.Vector3(smoothedPanX, smoothedPanY, 0);
+        const rotation = new THREE.Euler(
           THREE.MathUtils.degToRad(smoothedRotX),
           THREE.MathUtils.degToRad(smoothedRotY),
-          0
+          0,
+          'YXZ'
         );
-        modelEl.object3D.scale.set(smoothedScale, smoothedScale, smoothedScale);
+        const scaleVec = new THREE.Vector3(smoothedScale, smoothedScale, smoothedScale);
+        
+        // Update marker model
+        if (modelEl.object3D) {
+          modelEl.object3D.position.copy(position);
+          modelEl.object3D.rotation.copy(rotation);
+          modelEl.object3D.scale.copy(scaleVec);
+        }
+        
+        // Update world model
+        if (worldContainer.object3D) {
+          worldContainer.object3D.position.copy(position);
+          worldContainer.object3D.rotation.copy(rotation);
+          worldContainer.object3D.scale.copy(scaleVec);
+        }
       }
 
       // ─── Touch Controls - Rotation + Pinch Zoom ────────────
@@ -441,22 +539,28 @@
       window.addEventListener('orientationchange', () => {
         clearTimeout(orientationTimeout);
         orientationTimeout = setTimeout(() => {
-          const newScale = calculateAdaptiveScale();
+          const newScale = calculateAdaptiveScale(deviceConfig);
           modelEl.setAttribute('scale', `${newScale} ${newScale} ${newScale}`);
+          worldModelEl.setAttribute('scale', `${newScale} ${newScale} ${newScale}`);
           console.log(`🔄 Orientation changed → New scale: ${newScale.toFixed(1)}`);
           debug.innerHTML = `🔄 Orientation changed<br>New scale: ${newScale.toFixed(1)}<br>⏳ Recalibrating...`;
           
           setTimeout(() => {
-            debug.innerHTML = '✅ Marker Detected! Rotate to explore';
-          }, 1000);
+            if (markerFound) {
+              debug.innerHTML = '✅ Marker Detected! 1 finger: rotate | 2 fingers: zoom';
+            } else {
+              debug.innerHTML = '📍 WORLD MODE - 1 finger: rotate | 2 fingers: zoom';
+            }
+          }, 500);
         }, 300);
       });
 
       window.addEventListener('resize', () => {
         clearTimeout(orientationTimeout);
         orientationTimeout = setTimeout(() => {
-          const newScale = calculateAdaptiveScale();
+          const newScale = calculateAdaptiveScale(deviceConfig);
           modelEl.setAttribute('scale', `${newScale} ${newScale} ${newScale}`);
+          worldModelEl.setAttribute('scale', `${newScale} ${newScale} ${newScale}`);
           console.log(`📐 Viewport resized → New scale: ${newScale.toFixed(1)}`);
         }, 300);
       });
