@@ -39,7 +39,7 @@
     <div class="arjs-loader"><div>Loading, please wait...</div></div>
     <div id="debug">Loading...</div>
     <div id="hint">
-      📱 1 doigt: rotation seulement
+      📱 1 doigt: rotation | 2 doigts: zoom
     </div>
 
     <a-scene
@@ -67,7 +67,8 @@
         smoothtolerance="0.05"
       >
         <!-- 3D Model appears only when marker detected -->
-        <a-entity id="model3d" gltf-model="#myModel" scale="80 80 80" rotation="0 0 0" position="0 0 0"></a-entity>
+        <!-- Scale will be dynamically adjusted in JavaScript based on device screen size -->
+        <a-entity id="model3d" gltf-model="#myModel" scale="1 1 1" rotation="0 0 0" position="0 0 0"></a-entity>
       </a-nft>
 
       <a-camera position="0 0 0"></a-camera>
@@ -100,7 +101,44 @@
         return config;
       }
       
+      // ─── Responsive Scale Calculation ──────────────────────
+      function calculateAdaptiveScale() {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const aspectRatio = vw / vh;
+        
+        // Scale base on viewport size (empirically optimized for 40 80 80 reference)
+        let baseScale = 40;
+        
+        if (vw < 400) {
+          // Small devices (< 400px width)
+          baseScale = 30;
+        } else if (vw < 600) {
+          // Mid-size devices (400-600px)
+          baseScale = 50;
+        } else if (vw < 1024) {
+          // Tablets in portrait
+          baseScale = 70;
+        } else {
+          // Tablets/iPad in landscape or large devices
+          baseScale = 80;
+        }
+        
+        // Adjust for aspect ratio extremes
+        if (aspectRatio > 2.0) {
+          // Very wide screens (landscape)
+          baseScale *= 0.9;
+        } else if (aspectRatio < 0.6) {
+          // Very tall screens
+          baseScale *= 0.95;
+        }
+        
+        console.log(`📐 Viewport: ${vw}x${vh} | Aspect: ${aspectRatio.toFixed(2)} → Scale: ${baseScale.toFixed(1)}`);
+        return baseScale;
+      }
+      
       const deviceConfig = detectDevicePerformance();
+      const initialScale = calculateAdaptiveScale();
       
       // Update renderer attributes dynamically
       const arScene = document.querySelector('#arScene');
@@ -114,7 +152,10 @@
 
       // Show device info on debug panel
       debug.style.display = 'block';
-      debug.innerHTML = `📱 Device: ${deviceConfig.isLowEnd ? 'LOW-END' : 'HIGH-END'}<br>Ratio: ${deviceConfig.pixelRatio}<br>Precision: ${deviceConfig.precision}<br>⏳ Initializing...`;
+      debug.innerHTML = `📱 Device: ${deviceConfig.isLowEnd ? 'LOW-END' : 'HIGH-END'}<br>Ratio: ${deviceConfig.pixelRatio}<br>Scale: ${initialScale.toFixed(1)}<br>⏳ Initializing...`;
+
+      // Set initial scale
+      modelEl.setAttribute('scale', `${initialScale} ${initialScale} ${initialScale}`);
 
       // ─── Model Loaded ────────────────────────────────────────
       modelEl.addEventListener('model-loaded', () => {
@@ -330,13 +371,24 @@
         modelEl.object3D.scale.set(smoothedScale, smoothedScale, smoothedScale);
       }
 
-      // ─── Touch Controls - Rotation Only ─────────────────────
+      // ─── Touch Controls - Rotation + Pinch Zoom ────────────
+      let lastTouchDistance = 0;
+      let touchIdentifiers = {};
+      
       document.addEventListener('touchstart', (e) => {
         if (e.touches.length === 1) {
           // Single finger - rotation only
           lastX = e.touches[0].clientX;
           lastY = e.touches[0].clientY;
           console.log('📱 Single touch: rotation mode');
+        } else if (e.touches.length === 2) {
+          // Two fingers - pinch zoom
+          const touch1 = e.touches[0];
+          const touch2 = e.touches[1];
+          const dx = touch2.clientX - touch1.clientX;
+          const dy = touch2.clientY - touch1.clientY;
+          lastTouchDistance = Math.sqrt(dx * dx + dy * dy);
+          console.log('📱 Two-finger touch: zoom mode');
         }
       });
 
@@ -359,14 +411,55 @@
           rotY = Math.max(-180, Math.min(180, rotY));
           
           updateTransform();
+        } else if (e.touches.length === 2) {
+          // Two fingers - pinch zoom
+          const touch1 = e.touches[0];
+          const touch2 = e.touches[1];
+          const dx = touch2.clientX - touch1.clientX;
+          const dy = touch2.clientY - touch1.clientY;
+          const currentDistance = Math.sqrt(dx * dx + dy * dy);
+          
+          if (lastTouchDistance > 0) {
+            const zoomFactor = currentDistance / lastTouchDistance;
+            scale *= zoomFactor;
+            scale = Math.max(0.5, Math.min(20, scale)); // Zoom limits
+            lastTouchDistance = currentDistance;
+            updateTransform();
+          }
         }
       }, { passive: false });
 
       document.addEventListener('touchend', () => {
+        lastTouchDistance = 0;
         console.log('📱 Touch ended');
       });
 
       console.log('✅ AR App initialized');
+
+      // ─── Orientation & Resize Handler ──────────────────────
+      let orientationTimeout;
+      window.addEventListener('orientationchange', () => {
+        clearTimeout(orientationTimeout);
+        orientationTimeout = setTimeout(() => {
+          const newScale = calculateAdaptiveScale();
+          modelEl.setAttribute('scale', `${newScale} ${newScale} ${newScale}`);
+          console.log(`🔄 Orientation changed → New scale: ${newScale.toFixed(1)}`);
+          debug.innerHTML = `🔄 Orientation changed<br>New scale: ${newScale.toFixed(1)}<br>⏳ Recalibrating...`;
+          
+          setTimeout(() => {
+            debug.innerHTML = '✅ Marker Detected! Rotate to explore';
+          }, 1000);
+        }, 300);
+      });
+
+      window.addEventListener('resize', () => {
+        clearTimeout(orientationTimeout);
+        orientationTimeout = setTimeout(() => {
+          const newScale = calculateAdaptiveScale();
+          modelEl.setAttribute('scale', `${newScale} ${newScale} ${newScale}`);
+          console.log(`📐 Viewport resized → New scale: ${newScale.toFixed(1)}`);
+        }, 300);
+      });
 
       // ─── Camera Permission Handler ───────────────────────────
       // navigator.mediaDevices.getUserMedia({ video: true, audio: false })
